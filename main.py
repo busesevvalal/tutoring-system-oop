@@ -1,12 +1,14 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 import json
 import os
 
-# Rich opsiyonel: varsa profesyonel TUI, yoksa plain print
+
+# Rich opsiyonel: varsa profesyonel TUI, yoksa plain print/input
 USE_RICH = True
 try:
     from rich.console import Console
@@ -36,6 +38,9 @@ class User(ABC):
     def name(self) -> str:
         return self._name
 
+    def get_phone(self) -> str:
+        return self.__phone
+
     def get_phone_masked(self) -> str:
         if len(self.__phone) < 4:
             return "***"
@@ -53,14 +58,22 @@ class Student(User):
         self._appointments: List[int] = []
 
     def add_appointment(self, appointment_id: int) -> None:
-        self._appointments.append(appointment_id)
+        if appointment_id not in self._appointments:
+            self._appointments.append(appointment_id)
 
-    def get_info(self) -> str:  # polymorphism
-        return f"Öğrenci #{self.user_id} | {self.name} | Seviye: {self._grade_level} | Tel: {self.get_phone_masked()}"
+    @property
+    def grade_level(self) -> str:
+        return self._grade_level
 
     @property
     def appointments(self) -> List[int]:
         return list(self._appointments)
+
+    def get_info(self) -> str:  # polymorphism
+        return (
+            f"Öğrenci #{self.user_id} | {self.name} | Seviye: {self._grade_level} | "
+            f"Tel: {self.get_phone_masked()}"
+        )
 
 
 class Teacher(User):
@@ -71,8 +84,17 @@ class Teacher(User):
         self.__rating_sum = 0
         self.__rating_count = 0
 
+    @property
+    def branch(self) -> str:
+        return self._branch
+
+    @property
+    def lessons(self) -> List[int]:
+        return list(self._lessons)
+
     def add_lesson(self, lesson_id: int) -> None:
-        self._lessons.append(lesson_id)
+        if lesson_id not in self._lessons:
+            self._lessons.append(lesson_id)
 
     def rate(self, score: int) -> None:
         if not (1 <= score <= 5):
@@ -83,14 +105,23 @@ class Teacher(User):
     def avg_rating(self) -> float:
         return 0.0 if self.__rating_count == 0 else self.__rating_sum / self.__rating_count
 
+    def rating_state(self) -> tuple[int, int]:
+        return self.__rating_sum, self.__rating_count
+
+    def set_rating_state(self, rating_sum: int, rating_count: int) -> None:
+        self.__rating_sum = int(rating_sum)
+        self.__rating_count = int(rating_count)
+
     def get_info(self) -> str:  # polymorphism
-        return f"Öğretmen #{self.user_id} | {self.name} | Branş: {self._branch} | Puan: {self.avg_rating():.1f} | Tel: {self.get_phone_masked()}"
+        return (
+            f"Öğretmen #{self.user_id} | {self.name} | Branş: {self._branch} | "
+            f"Puan: {self.avg_rating():.1f} | Tel: {self.get_phone_masked()}"
+        )
 
-    @property
-    def lessons(self) -> List[int]:
-        return list(self._lessons)
 
-
+# -------------------------
+# 2) DATA CLASS
+# -------------------------
 @dataclass
 class Lesson:
     lesson_id: int
@@ -99,32 +130,70 @@ class Lesson:
     hourly_price: float
 
     def get_info(self) -> str:
-        return f"Ders #{self.lesson_id} | {self.title} | Süre: {self.duration_min} dk | Saatlik: {self.hourly_price}₺"
+        return (
+            f"Ders #{self.lesson_id} | {self.title} | Süre: {self.duration_min} dk | "
+            f"Saatlik: {self.hourly_price:.2f}₺"
+        )
 
 
+# -------------------------
+# 3) PAYMENT + APPOINTMENT
+# -------------------------
 class Payment:
-    def __init__(self, payment_id: int, appointment_id: int, amount: float, method: str):
+    def __init__(self, payment_id: int, appointment_id: int, amount: float, method: str, paid_at: Optional[str] = None):
         self._payment_id = payment_id
         self._appointment_id = appointment_id
-        self._amount = amount
+        self._amount = float(amount)
         self.__method = method
-        self._paid_at = datetime.now()
+        self._paid_at = datetime.strptime(paid_at, "%Y-%m-%d %H:%M") if paid_at else datetime.now()
+
+    @property
+    def payment_id(self) -> int:
+        return self._payment_id
+
+    @property
+    def appointment_id(self) -> int:
+        return self._appointment_id
+
+    @property
+    def amount(self) -> float:
+        return self._amount
+
+    @property
+    def method(self) -> str:
+        return self.__method
+
+    def paid_at_str(self) -> str:
+        return self._paid_at.strftime("%Y-%m-%d %H:%M")
 
     def get_info(self) -> str:
-        return f"Ödeme #{self._payment_id} | Randevu #{self._appointment_id} | {self._amount:.2f}₺ | Yöntem: {self.__method} | {self._paid_at:%Y-%m-%d %H:%M}"
+        return (
+            f"Ödeme #{self._payment_id} | Randevu #{self._appointment_id} | "
+            f"{self._amount:.2f}₺ | Yöntem: {self.__method} | {self._paid_at:%Y-%m-%d %H:%M}"
+        )
 
 
 class Appointment:
     # COMPOSITION: Appointment içinde Student/Teacher/Lesson nesneleri
-    def __init__(self, appointment_id: int, student: Student, teacher: Teacher, lesson: Lesson, date_str: str, time_str: str):
+    def __init__(
+        self,
+        appointment_id: int,
+        student: Student,
+        teacher: Teacher,
+        lesson: Lesson,
+        date_str: str,
+        time_str: str,
+        paid: bool = False,
+        payment_id: Optional[int] = None,
+    ):
         self._appointment_id = appointment_id
         self._student = student
         self._teacher = teacher
         self._lesson = lesson
         self._date_str = date_str
         self._time_str = time_str
-        self.__is_paid = False
-        self.__payment_id: Optional[int] = None
+        self.__is_paid = bool(paid)
+        self.__payment_id: Optional[int] = payment_id
 
     @property
     def appointment_id(self) -> int:
@@ -133,6 +202,10 @@ class Appointment:
     @property
     def is_paid(self) -> bool:
         return self.__is_paid
+
+    @property
+    def payment_id(self) -> Optional[int]:
+        return self.__payment_id
 
     def mark_paid(self, payment_id: int) -> None:
         self.__is_paid = True
@@ -152,10 +225,14 @@ class Appointment:
             f"Randevu #{self._appointment_id} | {self._date_str} {self._time_str} | {status}\n"
             f"  Öğrenci: {self._student.name} (#{self._student.user_id})\n"
             f"  Öğretmen: {self._teacher.name} (#{self._teacher.user_id})\n"
-            f"  Ders: {self._lesson.title} (#{self._lesson.lesson_id}) | Tutar: {self.calculate_total():.2f}₺"
+            f"  Ders: {self._lesson.title} (#{self._lesson.lesson_id}) | "
+            f"Tutar: {self.calculate_total():.2f}₺"
         )
 
 
+# -------------------------
+# 4) MAIN SYSTEM
+# -------------------------
 class TutoringSystem:
     def __init__(self, db_path: str = "db.json"):
         self._students: Dict[int, Student] = {}
@@ -163,7 +240,7 @@ class TutoringSystem:
         self._lessons: Dict[int, Lesson] = {}
         self._appointments: Dict[int, Appointment] = {}
         self._payments: Dict[int, Payment] = {}
-        self._occupied_slots: set[str] = set()   # çakışma kontrolü
+        self._occupied_slots: Set[str] = set()   # çakışma kontrolü
 
         self._next_student_id = 1
         self._next_teacher_id = 1
@@ -193,11 +270,25 @@ class TutoringSystem:
                 "payment": self._next_payment_id,
             },
             "students": [
-                {"id": s.user_id, "name": s.name, "phone_masked": s.get_phone_masked(), "grade": s._grade_level, "appointments": s.appointments}
+                {
+                    "id": s.user_id,
+                    "name": s.name,
+                    "phone": s.get_phone(),
+                    "grade": s.grade_level,
+                    "appointments": s.appointments,
+                }
                 for s in self._students.values()
             ],
             "teachers": [
-                {"id": t.user_id, "name": t.name, "branch": t._branch, "lessons": t.lessons}
+                {
+                    "id": t.user_id,
+                    "name": t.name,
+                    "phone": t.get_phone(),
+                    "branch": t.branch,
+                    "lessons": t.lessons,
+                    "rating_sum": t.rating_state()[0],
+                    "rating_count": t.rating_state()[1],
+                }
                 for t in self._teachers.values()
             ],
             "lessons": [
@@ -213,16 +304,29 @@ class TutoringSystem:
                     "date": a._date_str,
                     "time": a._time_str,
                     "paid": a.is_paid,
+                    "payment_id": a.payment_id,
                 }
                 for a in self._appointments.values()
             ],
+            "payments": [
+                {
+                    "id": p.payment_id,
+                    "appointment_id": p.appointment_id,
+                    "amount": p.amount,
+                    "method": p.method,
+                    "paid_at": p.paid_at_str(),
+                }
+                for p in self._payments.values()
+            ],
         }
+
         with open(self._db_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def load(self) -> None:
         if not os.path.exists(self._db_path):
             return
+
         try:
             with open(self._db_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -234,24 +338,27 @@ class TutoringSystem:
             self._next_appointment_id = ids.get("appointment", 1)
             self._next_payment_id = ids.get("payment", 1)
 
-            # Yeniden nesne üretimi (basit)
+            # Students
             for s in data.get("students", []):
-                st = Student(s["id"], s["name"], "0000", s.get("grade", ""))
+                st = Student(s["id"], s["name"], s.get("phone", ""), s.get("grade", ""))
                 for ap in s.get("appointments", []):
                     st.add_appointment(ap)
                 self._students[st.user_id] = st
 
+            # Teachers
             for t in data.get("teachers", []):
-                te = Teacher(t["id"], t["name"], "0000", t.get("branch", ""))
+                te = Teacher(t["id"], t["name"], t.get("phone", ""), t.get("branch", ""))
+                te.set_rating_state(t.get("rating_sum", 0), t.get("rating_count", 0))
                 for lid in t.get("lessons", []):
                     te.add_lesson(lid)
                 self._teachers[te.user_id] = te
 
+            # Lessons
             for l in data.get("lessons", []):
                 le = Lesson(l["id"], l["title"], l["duration"], l["hourly"])
                 self._lessons[le.lesson_id] = le
 
-            # appointments: composition olduğu için id'lerle bağla
+            # Appointments
             for a in data.get("appointments", []):
                 ap = Appointment(
                     a["id"],
@@ -260,11 +367,25 @@ class TutoringSystem:
                     self._lessons[a["lesson_id"]],
                     a["date"],
                     a["time"],
+                    a.get("paid", False),
+                    a.get("payment_id"),
                 )
                 self._appointments[ap.appointment_id] = ap
                 self._occupied_slots.add(ap.slot_key())
+
+            # Payments
+            for p in data.get("payments", []):
+                pay = Payment(
+                    p["id"],
+                    p["appointment_id"],
+                    p["amount"],
+                    p["method"],
+                    p.get("paid_at"),
+                )
+                self._payments[pay.payment_id] = pay
+
         except Exception:
-            # bozuk json vs. olursa sistemi açmaya engel olmasın
+            # bozuk json vb. olursa sistem açılmaya devam etsin
             pass
 
     # ---------- create entities ----------
@@ -285,6 +406,11 @@ class TutoringSystem:
     def add_lesson(self, teacher_id: int, title: str, duration_min: int, hourly_price: float) -> Lesson:
         if teacher_id not in self._teachers:
             raise KeyError("Öğretmen bulunamadı.")
+        if duration_min <= 0:
+            raise ValueError("Süre 0'dan büyük olmalı.")
+        if hourly_price <= 0:
+            raise ValueError("Saatlik ücret 0'dan büyük olmalı.")
+
         lesson = Lesson(self._next_lesson_id, title, duration_min, hourly_price)
         self._lessons[lesson.lesson_id] = lesson
         self._teachers[teacher_id].add_lesson(lesson.lesson_id)
@@ -299,6 +425,7 @@ class TutoringSystem:
             raise KeyError("Öğretmen bulunamadı.")
         if lesson_id not in self._lessons:
             raise KeyError("Ders bulunamadı.")
+
         teacher = self._teachers[teacher_id]
         if lesson_id not in teacher.lessons:
             raise ValueError("Bu ders seçilen öğretmene ait değil.")
@@ -306,9 +433,16 @@ class TutoringSystem:
         self._validate_date(date_str)
         self._validate_time(time_str)
 
-        appt = Appointment(self._next_appointment_id, self._students[student_id], teacher, self._lessons[lesson_id], date_str, time_str)
+        appt = Appointment(
+            self._next_appointment_id,
+            self._students[student_id],
+            teacher,
+            self._lessons[lesson_id],
+            date_str,
+            time_str,
+        )
 
-        # ÇAKIŞMA kontrolü (profesyonel dokunuş)
+        # ÇAKIŞMA kontrolü
         key = appt.slot_key()
         if key in self._occupied_slots:
             raise ValueError("Bu öğretmen için bu tarih/saat dolu. Başka saat seçin.")
@@ -326,9 +460,11 @@ class TutoringSystem:
         appt = self._appointments[appointment_id]
         if appt.is_paid:
             raise ValueError("Bu randevu zaten ödenmiş.")
+
         payment = Payment(self._next_payment_id, appointment_id, appt.calculate_total(), method)
-        self._payments[self._next_payment_id] = payment
-        appt.mark_paid(self._next_payment_id)
+        self._payments[payment.payment_id] = payment
+        appt.mark_paid(payment.payment_id)
+
         self._next_payment_id += 1
         self.save()
         return payment
@@ -361,14 +497,21 @@ class TutoringSystem:
 # -------------------------
 def ui_title():
     if USE_RICH:
-        console.print(Panel.fit("ÖZEL DERS & ÖĞRETMEN EŞLEŞTİRME SİSTEMİ", title="TutorMatch", subtitle="Terminal Uygulaması", style="bold cyan"))
+        console.print(
+            Panel.fit(
+                "ÖZEL DERS & ÖĞRETMEN EŞLEŞTİRME SİSTEMİ",
+                title="TutorMatch",
+                subtitle="Terminal Uygulaması",
+                style="bold cyan",
+            )
+        )
     else:
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("ÖZEL DERS & ÖĞRETMEN EŞLEŞTİRME SİSTEMİ")
-        print("="*60)
+        print("=" * 60)
 
 
-def ui_menu():
+def ui_menu() -> str:
     if USE_RICH:
         table = Table(title="Menü", show_lines=True)
         table.add_column("Seçim", justify="center")
@@ -398,7 +541,7 @@ def ui_menu():
         return input("Seçiminiz: ").strip()
 
 
-def list_menu():
+def list_menu() -> str:
     if USE_RICH:
         return Prompt.ask("Liste (1-Öğrenci, 2-Öğretmen, 3-Ders, 4-Randevu, 5-Ödeme)", default="2")
     else:
@@ -422,6 +565,16 @@ def error(msg: str):
         console.print(f"[red]❌ {msg}[/red]")
     else:
         print("❌", msg)
+
+
+def safe_float(prompt_text: str, default: str = "400") -> float:
+    while True:
+        raw = Prompt.ask(prompt_text, default=default) if USE_RICH else input(f"{prompt_text} ({default}): ") or default
+        raw = raw.strip().replace(",", ".")
+        try:
+            return float(raw)
+        except ValueError:
+            error("Geçersiz sayı formatı.")
 
 
 def main():
@@ -450,7 +603,7 @@ def main():
                 teacher_id = IntPrompt.ask("Öğretmen ID") if USE_RICH else int(input("Öğretmen ID: "))
                 title = Prompt.ask("Ders adı") if USE_RICH else input("Ders adı: ")
                 duration = IntPrompt.ask("Süre (dk)") if USE_RICH else int(input("Süre (dk): "))
-                hourly = float(Prompt.ask("Saatlik ücret (₺)", default="400").replace(",", ".")) if USE_RICH else float(input("Saatlik ücret: ").replace(",", "."))
+                hourly = safe_float("Saatlik ücret (₺)", default="400")
                 l = system.add_lesson(teacher_id, title.strip(), duration, hourly)
                 info(l.get_info())
 
@@ -481,12 +634,16 @@ def main():
 
             elif choice == "7":
                 sub = list_menu()
+
                 if sub == "1":
                     if USE_RICH:
-                        t = Table(title="Öğrenciler")
-                        t.add_column("ID"); t.add_column("Ad"); t.add_column("Seviye")
+                        t = Table(title="Öğrenciler", show_lines=True)
+                        t.add_column("ID", justify="center")
+                        t.add_column("Ad")
+                        t.add_column("Seviye")
+                        t.add_column("Tel")
                         for s in system.students():
-                            t.add_row(str(s.user_id), s.name, s._grade_level)
+                            t.add_row(str(s.user_id), s.name, s.grade_level, s.get_phone_masked())
                         console.print(t)
                     else:
                         for s in system.students():
@@ -494,10 +651,14 @@ def main():
 
                 elif sub == "2":
                     if USE_RICH:
-                        t = Table(title="Öğretmenler")
-                        t.add_column("ID"); t.add_column("Ad"); t.add_column("Branş"); t.add_column("Puan")
+                        t = Table(title="Öğretmenler", show_lines=True)
+                        t.add_column("ID", justify="center")
+                        t.add_column("Ad")
+                        t.add_column("Branş")
+                        t.add_column("Puan", justify="center")
+                        t.add_column("Tel")
                         for te in system.teachers():
-                            t.add_row(str(te.user_id), te.name, te._branch, f"{te.avg_rating():.1f}")
+                            t.add_row(str(te.user_id), te.name, te.branch, f"{te.avg_rating():.1f}", te.get_phone_masked())
                         console.print(t)
                     else:
                         for te in system.teachers():
@@ -505,10 +666,13 @@ def main():
 
                 elif sub == "3":
                     if USE_RICH:
-                        t = Table(title="Dersler")
-                        t.add_column("ID"); t.add_column("Başlık"); t.add_column("Süre"); t.add_column("Saatlik")
+                        t = Table(title="Dersler", show_lines=True)
+                        t.add_column("ID", justify="center")
+                        t.add_column("Başlık")
+                        t.add_column("Süre (dk)", justify="center")
+                        t.add_column("Saatlik (₺)", justify="right")
                         for l in system.lessons():
-                            t.add_row(str(l.lesson_id), l.title, str(l.duration_min), f"{l.hourly_price}")
+                            t.add_row(str(l.lesson_id), l.title, str(l.duration_min), f"{l.hourly_price:.2f}")
                         console.print(t)
                     else:
                         for l in system.lessons():
@@ -524,20 +688,32 @@ def main():
 
                 elif sub == "5":
                     if USE_RICH:
-                        t = Table(title="Ödemeler")
-                        t.add_column("Bilgi")
+                        t = Table(title="Ödemeler", show_lines=True)
+                        t.add_column("ID", justify="center")
+                        t.add_column("Randevu", justify="center")
+                        t.add_column("Tutar", justify="right")
+                        t.add_column("Yöntem")
+                        t.add_column("Tarih")
                         for p in system.payments():
-                            t.add_row(p.get_info())
+                            t.add_row(
+                                str(p.payment_id),
+                                str(p.appointment_id),
+                                f"{p.amount:.2f}₺",
+                                p.method,
+                                p.paid_at_str(),
+                            )
                         console.print(t)
                     else:
                         for p in system.payments():
                             print(p.get_info())
+
                 else:
                     error("Geçersiz seçim.")
 
             elif choice == "0":
                 info("Çıkılıyor...")
                 break
+
             else:
                 error("Geçersiz seçim.")
 
@@ -547,4 +723,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
